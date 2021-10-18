@@ -11,7 +11,7 @@ elif defined(macosx):
   {.passC: "-DWEBVIEW_COCOA=1 -x objective-c".}
   {.passL: "-framework Cocoa -framework WebKit".}
 
-import tables, strutils
+import tables, sharedtables, strutils, atomics
 import macros
 import json
 
@@ -108,7 +108,7 @@ proc newWebView*(title="WebView", url="",
                  cb:ExternalInvokeCb=nil): Webview =
   ## ``newWebView`` creates and opens a new webview window using the given settings. 
   ## This function will do webview ``init``
-  var w = cast[Webview](alloc0(sizeof(WebviewObj)))
+  var w = cast[Webview](allocShared0(sizeof(WebviewObj)))
   w.title = title
   w.url = url
   w.width = width.cint
@@ -123,15 +123,19 @@ proc newWebView*(title="WebView", url="",
 
 # for dispatch
 
-var dispatchTable = newTable[int, DispatchFn]()
+var dispatchTable = SharedTable[int, DispatchFn]()
+dispatchTable.init()
+var dispatchTableKey: Atomic[int]
+dispatchTableKey.store(0)
 
 proc generalDispatchProc(w: Webview, arg: pointer) {.exportc.} =
   let idx = cast[int](arg)
-  let fn = dispatchTable[idx]
+  var fn = dispatchTable.mget(idx)
   fn()
+  dispatchTable.del(idx)
 
 proc dispatch*(w: Webview, fn: DispatchFn) =
-  let idx = dispatchTable.len()+1
+  let idx = dispatchTableKey.fetchAdd(1)
   dispatchTable[idx] = fn
   dispatch(w, generalDispatchProc, cast[pointer](idx))
 
